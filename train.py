@@ -46,6 +46,8 @@ ds = ds.map(
 
 if(cfg.patches == "True"):
     
+    model_input_shape = patch_shape 
+
     # extract patches from images
     ds = ds.map(
         lambda image: (
@@ -62,7 +64,9 @@ if(cfg.patches == "True"):
 
     # remove batch -> ([245,64,32,32,3]) to [15680,32,32,3], images are saved in a list for the augment step
     ds = ds.unbatch().apply(tf.data.experimental.assert_cardinality(n_patches_per_image * n_images))
-    
+else:
+    model_input_shape = image_shape   
+
 if(cfg.augmentation == "True"):
     # image augmentation
     ds = ds.map(
@@ -89,12 +93,9 @@ train_dataset, val_dataset, test_dataset = split_data(ds,cfg.batch_size)
 
 # construct our convolutional autoencoder
 print("[INFO] building autoencoder...")
-autoencoder = autoencoder(patch_shape, 100)
-optimizer = optimizers.Adam(learning_rate=2e-4, decay=1e-5)
-autoencoder.compile(optimizer=optimizer, loss="mse", metrics=["mae"])
-
+autoencoder = autoencoder(model_input_shape)
 
 # train the convolutional autoencoder
-H = autoencoder.fit(train_dataset,validation_data=val_dataset,epochs=5,batch_size=cfg.batch_size)
+autoencoder.fit(train_dataset,validation_data=val_dataset,epochs=20,batch_size=cfg.batch_size)
 
 autoencoder.save("model2")

@@ -89,6 +89,9 @@ def augment_using_ops(image: tf.Tensor) -> tf.Tensor:
 
     image = tf.image.random_flip_left_right(image)
     image = tf.image.random_flip_up_down(image)
+    image = tf.image.random_hue(image, 0.03)
+    image = tf.image.random_brightness(image, 0.03)
+
 
     return image
 

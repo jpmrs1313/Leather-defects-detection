@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 import glob
 from sklearn.feature_extraction import image as extraction
 import numpy as np
-
+from networks import autoencoder
+from tensorflow.keras import layers, optimizers
 
 def load_image(file, shape):
     height, width, depth = shape
@@ -103,7 +104,7 @@ def recon_im(patches: np.ndarray, image_shape):
     return reconstructedim
 
 
-image_shape = (128, 128, 3)
+image_shape = (256, 256, 3)
 
 
 path = r"C:/Users/jpmrs/OneDrive/Desktop/Dissertação/code/Unsupervised approach/Data/mvtec/leather"
@@ -111,8 +112,6 @@ train_path = path + "/test"
 files = glob.glob(train_path + "/**/*.png", recursive=True)
 
 ds = tf.data.Dataset.from_tensor_slices(files).shuffle(1024)
-
-#n_images = len(ds)
 
 ds = ds.map(
     lambda image: (
@@ -125,12 +124,18 @@ ds = ds.map(
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
-autoencoder = tf.keras.models.load_model("model2")
+
+@tf.function
+def ssim_loss(gt, y_pred, max_val=1.0):
+    return 1 - tf.reduce_mean(tf.image.ssim(gt, y_pred, max_val=max_val))
+
+autoencoder = tf.keras.models.load_model("model2", compile=False)
+optimizer = optimizers.Adam(learning_rate=2e-4, decay=1e-5)
+autoencoder.compile(optimizer=optimizer, loss=ssim_loss, metrics=["mae"])
+
 
 for image in ds:
-    print(image.shape)
     patches = exctract_patches(image, (32,32,3))
-    print(patches.shape)
     predictions = autoencoder.predict(patches)
     inv = recon_im(predictions, image_shape)
 
@@ -146,4 +151,4 @@ for image in ds:
     plt.imshow(inv)
     plt.axis("off")
     plt.show()
-    break
+
