@@ -16,7 +16,6 @@ def load_image(file_path: string, shape: tf.Tensor) -> tf.Tensor:
     -----------
     image: image tf.Tensor ([height, width, channels])
     """
-    print(shape)
     height, width, depth = shape
 
     # Read image bytes
@@ -77,11 +76,44 @@ def extract_patches(image: tf.Tensor, patch_shape: tf.Tensor) -> tf.Tensor:
     return patches
 
 
-def augment_using_ops(image):
-    # randomly flip the images horizontally, randomly flip the images
-    # vertically, and rotate the images by 90 degrees in the counter
-    # clockwise direction
+def augment_using_ops(image: tf.Tensor) -> tf.Tensor:
+    """Image augmentation - create new image using geometric transformations 
+
+    Parameters
+    -----------
+    image: image tf.Tensor ([height, width, channels])
+    Returns
+    -----------
+    image: image tf.Tensor ([height, width, channels])
+    """
+
     image = tf.image.random_flip_left_right(image)
     image = tf.image.random_flip_up_down(image)
-    # x = tf.image.rot90(x)
-    return image, image
+
+    return image
+
+
+def split_data(dataset: tf.Tensor,batch_size: int)-> tf.Tensor:
+    """Split data in train 70%, validation 15% and test 15%
+
+    Parameters
+    -----------
+    dataset:  tf.Tensor 
+    Returns
+    -----------
+    train_dataset, val_dataset, test_dataset
+    """
+    train_size = int(0.7 * len(dataset))
+    val_size = int(0.15 * len(dataset))
+    test_size = int(0.15 * len(dataset))
+
+    train_dataset = dataset.take(train_size)
+    test_dataset = dataset.skip(train_size)
+    val_dataset = test_dataset.skip(test_size)
+    test_dataset = test_dataset.take(test_size)
+
+    train_dataset = train_dataset.cache().batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    val_dataset = val_dataset.cache().batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    test_dataset = test_dataset.cache().batch(batch_size).prefetch(tf.data.AUTOTUNE)
+
+    return train_dataset, val_dataset, test_dataset

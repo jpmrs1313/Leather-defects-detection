@@ -103,9 +103,7 @@ def recon_im(patches: np.ndarray, image_shape):
     return reconstructedim
 
 
-image_shape = (256, 256, 3)
-patch_shape = (32, 32, 3)
-BS = 32
+image_shape = (128, 128, 3)
 
 
 path = r"C:/Users/jpmrs/OneDrive/Desktop/Dissertação/code/Unsupervised approach/Data/mvtec/leather"
@@ -114,7 +112,7 @@ files = glob.glob(train_path + "/**/*.png", recursive=True)
 
 ds = tf.data.Dataset.from_tensor_slices(files).shuffle(1024)
 
-n_images = len(ds)
+#n_images = len(ds)
 
 ds = ds.map(
     lambda image: (
@@ -127,11 +125,12 @@ ds = ds.map(
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
-autoencoder = tf.keras.models.load_model("model_test")
+autoencoder = tf.keras.models.load_model("model2")
 
 for image in ds:
-
-    patches = exctract_patches(image, patch_shape)
+    print(image.shape)
+    patches = exctract_patches(image, (32,32,3))
+    print(patches.shape)
     predictions = autoencoder.predict(patches)
     inv = recon_im(predictions, image_shape)
 

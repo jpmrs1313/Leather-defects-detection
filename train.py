@@ -1,21 +1,31 @@
 import glob
 import tensorflow as tf
-from utils import load_image, pre_process, augment_using_ops, extract_patches
-from networks import *
+from tensorflow.keras import optimizers
+from utils import load_image, pre_process, augment_using_ops, extract_patches, split_data
+from networks import autoencoder
+from options import Options
 
+tf.random.set_seed(5)
 
-image_shape = (256, 256, 3)
-patch_shape = (32, 32, 3)
-BS = 32
+if not Options().train_validate():
+    exit()
 
-path = r"C:/Users/jpmrs/OneDrive/Desktop/Dissertação/code/Unsupervised approach/Data/mvtec/leather"
-train_path = path + "/train"
-files = glob.glob(train_path + "/**/*.png", recursive=True)
+# parse argument variables
+cfg = Options().parse()
 
-ds = tf.data.Dataset.from_tensor_slices(files).shuffle(1024)
+image_shape = (cfg.image_size, cfg.image_size, 3)
+patch_shape = (cfg.patch_size, cfg.patch_size, 3)
+
+# read all image file paths
+image_paths = []
+[image_paths.extend(glob.glob(cfg.train_data_dir + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
+
+# create tf.Data with image paths and shuffle them
+ds = tf.data.Dataset.from_tensor_slices(image_paths).shuffle(1024)
 
 n_images = len(ds)
 
+# load images from paths
 ds = ds.map(
     lambda image: (
         tf.py_function(
@@ -27,43 +37,55 @@ ds = ds.map(
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
+# pre-process images
 ds = ds.map(
     lambda image: (tf.numpy_function(
         func=pre_process, inp=[image], Tout=tf.float32)),
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
+if(cfg.patches == "True"):
+    
+    # extract patches from images
+    ds = ds.map(
+        lambda image: (
+            tf.py_function(func=extract_patches, inp=[
+                image, patch_shape], Tout=tf.float32)
+        ),
+        num_parallel_calls=tf.data.AUTOTUNE,
+    )
+
+    # get number of patches obtained in one image
+    elem = next(iter(ds))
+    n_patches_per_image = len(elem)
+
+
+    # remove batch -> ([245,64,32,32,3]) to [15680,32,32,3], images are saved in a list for the augment step
+    ds = ds.unbatch().apply(tf.data.experimental.assert_cardinality(n_patches_per_image * n_images))
+    
+if(cfg.augmentation == "True"):
+    # image augmentation
+    ds = ds.map(
+        lambda image: (
+            tf.py_function(
+                func=augment_using_ops,
+                inp=[image],
+                Tout=tf.float32,
+            )
+        ),
+        num_parallel_calls=tf.data.AUTOTUNE,
+    ).repeat(cfg.augmentation_iterations)  # number of augmentation iterations
+
+# from image, create (image,image)->(element and label)
 ds = ds.map(
     lambda image: (
-        tf.py_function(func=extract_patches, inp=[
-            image, patch_shape], Tout=tf.float32)
+        image, image
     ),
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
-# get number of patches obtained in one image
-elem = next(iter(ds))
-n_patches_per_image = len(elem)
-
-
-ds = ds.unbatch().apply(
-    tf.data.experimental.assert_cardinality(n_patches_per_image * n_images)
-)
-ds = ds.map(augment_using_ops,
-            num_parallel_calls=tf.data.AUTOTUNE)  # .repeat(2)
-
-train_size = int(0.7 * len(ds))
-val_size = int(0.15 * len(ds))
-test_size = int(0.15 * len(ds))
-
-train_dataset = ds.take(train_size)
-test_dataset = ds.skip(train_size)
-val_dataset = test_dataset.skip(test_size)
-test_dataset = test_dataset.take(test_size)
-
-train_dataset = train_dataset.cache().batch(BS).prefetch(tf.data.AUTOTUNE)
-val_dataset = val_dataset.cache().batch(BS).prefetch(tf.data.AUTOTUNE)
-test_dataset = test_dataset.cache().batch(BS).prefetch(tf.data.AUTOTUNE)
+# split data in train, validate and test
+train_dataset, val_dataset, test_dataset = split_data(ds,cfg.batch_size)
 
 # construct our convolutional autoencoder
 print("[INFO] building autoencoder...")
@@ -71,12 +93,8 @@ autoencoder = autoencoder(patch_shape, 100)
 optimizer = optimizers.Adam(learning_rate=2e-4, decay=1e-5)
 autoencoder.compile(optimizer=optimizer, loss="mse", metrics=["mae"])
 
-# train the convolutional autoencoder
-H = autoencoder.fit(
-    train_dataset,
-    validation_data=val_dataset,
-    epochs=10,
-    batch_size=BS,
-)
 
-autoencoder.save("model_test")
+# train the convolutional autoencoder
+H = autoencoder.fit(train_dataset,validation_data=val_dataset,epochs=5,batch_size=cfg.batch_size)
+
+autoencoder.save("model2")

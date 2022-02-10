@@ -1,4 +1,4 @@
-from tensorflow.keras import layers, optimizers
+from tensorflow.keras import layers
 from tensorflow.keras.models import Model, Sequential
 
 
