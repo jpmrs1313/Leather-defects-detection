@@ -1,7 +1,6 @@
 import glob
 import tensorflow as tf
-from tensorflow.keras import optimizers
-from utils import load_image, pre_process, augment_using_ops, extract_patches, split_data
+from utils import load_image, pre_process, augment_using_ops, extract_patches, split_data, get_threshold
 from networks import autoencoder
 from options import Options
 
@@ -13,13 +12,17 @@ if not Options().train_validate():
 # parse argument variables
 cfg = Options().parse()
 
-image_shape = (cfg.image_size, cfg.image_size, 3)
-patch_shape = (cfg.patch_size, cfg.patch_size, 3)
+if(cfg.grey_scale == "True"):
+    image_shape = (cfg.image_size, cfg.image_size,1)
+    patch_shape = (cfg.patch_size, cfg.patch_size,1)
+else:
+    image_shape = (cfg.image_size, cfg.image_size, 3)
+    patch_shape = (cfg.patch_size, cfg.patch_size, 3)
 
 # read all image file paths
 image_paths = []
-[image_paths.extend(glob.glob(cfg.train_data_dir + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
-
+# [image_paths.extend(glob.glob(cfg.train_data_dir + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
+[image_paths.extend(glob.glob("C:/Users/jpmrs/OneDrive/Desktop/Dissertação/code/Data/mvtec/leather/train" + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
 # create tf.Data with image paths and shuffle them
 ds = tf.data.Dataset.from_tensor_slices(image_paths).shuffle(1024)
 
@@ -40,7 +43,7 @@ ds = ds.map(
 # pre-process images
 ds = ds.map(
     lambda image: (tf.numpy_function(
-        func=pre_process, inp=[image], Tout=tf.float32)),
+        func=pre_process, inp=[image, cfg.grey_scale], Tout=tf.float32)),
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
@@ -61,11 +64,11 @@ if(cfg.patches == "True"):
     elem = next(iter(ds))
     n_patches_per_image = len(elem)
 
-
     # remove batch -> ([245,64,32,32,3]) to [15680,32,32,3], images are saved in a list for the augment step
     ds = ds.unbatch().apply(tf.data.experimental.assert_cardinality(n_patches_per_image * n_images))
 else:
     model_input_shape = image_shape   
+
 
 if(cfg.augmentation == "True"):
     # image augmentation
@@ -80,6 +83,7 @@ if(cfg.augmentation == "True"):
         num_parallel_calls=tf.data.AUTOTUNE,
     ).repeat(cfg.augmentation_iterations)  # number of augmentation iterations
 
+
 # from image, create (image,image)->(element and label)
 ds = ds.map(
     lambda image: (
@@ -93,9 +97,13 @@ train_dataset, val_dataset, test_dataset = split_data(ds,cfg.batch_size)
 
 # construct our convolutional autoencoder
 print("[INFO] building autoencoder...")
-autoencoder = autoencoder(model_input_shape)
+autoencoder = autoencoder(model_input_shape, 100)
 
 # train the convolutional autoencoder
 autoencoder.fit(train_dataset,validation_data=val_dataset,epochs=20,batch_size=cfg.batch_size)
 
 autoencoder.save("model2")
+
+ssim_threshold, l1_threshold=get_threshold(test_dataset,autoencoder,cfg)
+
+print(ssim_threshold,l1_threshold)

@@ -2,6 +2,9 @@ from tensorflow.keras import layers, optimizers
 from tensorflow.keras.models import Model, Sequential
 import tensorflow as tf
 
+@tf.function
+def ssim_loss(gt, y_pred, max_val=1.0):
+    return 1 - tf.reduce_mean(tf.image.ssim(gt, y_pred, max_val=max_val))
 
 def autoencoder(shape, latentDim=100):
     height, width, depth = shape
@@ -53,10 +56,6 @@ def autoencoder(shape, latentDim=100):
     model = Model(inputs=img, outputs=output)
 
     optimizer = optimizers.Adam(learning_rate=2e-4, decay=1e-5)
-    
-    @tf.function
-    def ssim_loss(gt, y_pred, max_val=1.0):
-        return 1 - tf.reduce_mean(tf.image.ssim(gt, y_pred, max_val=max_val))
     
     model.compile(optimizer=optimizer, loss=ssim_loss, metrics=["mae"])
 

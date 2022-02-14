@@ -14,6 +14,7 @@ class Options:
         self.parser.add_argument("--patches",  type=str, default="False", help="Do you want to exctract patches from images  True/False")
         self.parser.add_argument("--patch_size", type=int, default=32, help="Patch_size, the image will be square, height equal to width")
         self.parser.add_argument("--batch_size", type=int, default=32)
+        self.parser.add_argument("--grey_scale", type=str, default="False")
 
     def parse(self):
         self.opt = self.parser.parse_args()

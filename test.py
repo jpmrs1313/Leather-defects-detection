@@ -1,118 +1,32 @@
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import glob
-from sklearn.feature_extraction import image as extraction
+from utils import load_image, pre_process, extract_patches, recon_im,get_residual_map
+from networks import ssim_loss
+from options import Options
+from tensorflow.keras import optimizers
 import numpy as np
-from networks import autoencoder
-from tensorflow.keras import layers, optimizers
-
-def load_image(file, shape):
-    height, width, depth = shape
-    # Read image bytes
-    image = tf.io.read_file(file)
-    # Load image
-    image = tf.io.decode_png(image, channels=depth, dtype=tf.uint8)
-    image = tf.image.resize(image, (height, width))
-    image = tf.cast(image, tf.float32) / 255.0
-
-    return image
 
 
-def exctract_patches(image, shape):
-    height, width, depth = shape
-    image = tf.expand_dims(image, 0)
+# parse argument variables
+cfg = Options().parse()
 
-    patches = tf.image.extract_patches(
-        images=image,
-        sizes=[1, height, width, 1],
-        strides=[1, height, width, 1],
-        rates=[1, 1, 1, 1],
-        padding="VALID",
-    )
-    patches = tf.reshape(patches, [-1, height, width, depth])
+if(cfg.grey_scale == "True"):
+    image_shape = (cfg.image_size, cfg.image_size,1)
+    patch_shape = (cfg.patch_size, cfg.patch_size,1)
+else:
+    image_shape = (cfg.image_size, cfg.image_size, 3)
+    patch_shape = (cfg.patch_size, cfg.patch_size, 3)
 
-    return patches
+# read all image file paths
+image_paths = []
+[image_paths.extend(glob.glob(cfg.test_data_dir + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
 
+ds = tf.data.Dataset.from_tensor_slices(image_paths).shuffle(1024)
 
-def recon_im(patches: np.ndarray, image_shape):
-    """Reconstruct the image from all patches.
-        Patches are assumed to be square and overlapping depending on the patch_size. The image is constructed
-         by filling in the patches from left to right, top to bottom, averaging the overlapping parts.
-    Parameters
-    -----------
-    patches: 4D ndarray with shape (patch_number,patch_height,patch_width,channels)
-        Array containing extracted patches. If the patches contain colour information,
-        channels are indexed along the last dimension: RGB patches would
-        have `n_channels=3`.
-    Returns
-    -----------
-    reconstructedim: ndarray with shape (height, width, channels)
-                      or ndarray with shape (height, width) if output image only has one channel
-                    Reconstructed image from the given patches
-    """
-    image_height, image_width, image_depth = image_shape
+n_images = len(ds)
 
-    patch_size = patches.shape[1]  # patches assumed to be square
-
-    # Assign output image shape based on patch sizes
-    rows = ((image_height - patch_size) // patch_size) * \
-        patch_size + patch_size
-    cols = ((image_width - patch_size) // patch_size) * patch_size + patch_size
-
-    reconim = np.zeros((rows, cols, image_depth))
-    divim = np.zeros((rows, cols, image_depth))
-
-    p_c = (
-        cols - patch_size + patch_size
-    ) / patch_size  # number of patches needed to fill out a row
-
-    totpatches = patches.shape[0]
-    initr, initc = 0, 0
-
-    # extract each patch and place in the zero matrix and sum it with existing pixel values
-
-    reconim[initr:patch_size, initc:patch_size] = patches[
-        0
-    ]  # fill out top left corner using first patch
-    divim[initr:patch_size, initc:patch_size] = np.ones(patches[0].shape)
-
-    patch_num = 1
-
-    while patch_num <= totpatches - 1:
-        initc = initc + patch_size
-        reconim[initr: initr + patch_size, initc: patch_size + initc] += patches[
-            patch_num
-        ]
-        divim[initr: initr + patch_size, initc: patch_size + initc] += np.ones(
-            patches[patch_num].shape
-        )
-
-        if np.remainder(patch_num + 1, p_c) == 0 and patch_num < totpatches - 1:
-            initr = initr + patch_size
-            initc = 0
-            reconim[initr: initr + patch_size, initc:patch_size] += patches[
-                patch_num + 1
-            ]
-            divim[initr: initr + patch_size, initc:patch_size] += np.ones(
-                patches[patch_num].shape
-            )
-            patch_num += 1
-        patch_num += 1
-    # Average out pixel values
-    reconstructedim = reconim / divim
-
-    return reconstructedim
-
-
-image_shape = (256, 256, 3)
-
-
-path = r"C:/Users/jpmrs/OneDrive/Desktop/Dissertação/code/Unsupervised approach/Data/mvtec/leather"
-train_path = path + "/test"
-files = glob.glob(train_path + "/**/*.png", recursive=True)
-
-ds = tf.data.Dataset.from_tensor_slices(files).shuffle(1024)
-
+# load images from paths
 ds = ds.map(
     lambda image: (
         tf.py_function(
@@ -124,31 +38,61 @@ ds = ds.map(
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
-
-@tf.function
-def ssim_loss(gt, y_pred, max_val=1.0):
-    return 1 - tf.reduce_mean(tf.image.ssim(gt, y_pred, max_val=max_val))
+# pre-process images
+ds = ds.map(
+    lambda image: (tf.numpy_function(
+        func=pre_process, inp=[image,cfg.grey_scale], Tout=tf.float32)),
+    num_parallel_calls=tf.data.AUTOTUNE,
+)
 
 autoencoder = tf.keras.models.load_model("model2", compile=False)
 optimizer = optimizers.Adam(learning_rate=2e-4, decay=1e-5)
 autoencoder.compile(optimizer=optimizer, loss=ssim_loss, metrics=["mae"])
 
+if(cfg.patches=="True"):
+    for image in ds:
+        patches =  extract_patches(image, patch_shape)
+        predictions = autoencoder.predict(patches)
+        result = recon_im(predictions, image_shape)
 
-for image in ds:
-    patches = exctract_patches(image, (32,32,3))
-    predictions = autoencoder.predict(patches)
-    inv = recon_im(predictions, image_shape)
+        fig = plt.figure(figsize=(10, 7))
+        rows = 1
+        columns = 2
+        fig.add_subplot(rows, columns, 1)
 
-    fig = plt.figure(figsize=(10, 7))
-    rows = 1
-    columns = 2
-    fig.add_subplot(rows, columns, 1)
+        plt.imshow(image,cmap='gray')
+        plt.axis("off")
 
-    plt.imshow(image)
-    plt.axis("off")
+        fig.add_subplot(rows, columns, 2)
+        plt.imshow(result,cmap='gray')
+        plt.axis("off")
+        plt.show()
+else:
+    results = autoencoder.predict(ds)
+    for result, image in zip(results,ds):
+        ssim_residual_map = get_residual_map(image,autoencoder, cfg)
 
-    fig.add_subplot(rows, columns, 2)
-    plt.imshow(inv)
-    plt.axis("off")
-    plt.show()
+        depr_mask = np.ones((256,256)) * 0.2
+        depr_mask[5:256-5, 5:256-5] = 1
+
+        ssim_residual_map *= depr_mask
+
+        mask = np.zeros((256,256))
+        mask[ssim_residual_map > 0.2488967776298523] = 1
+        mask[ssim_residual_map <= 0.2488967776298523] = 0
+     
+        fig = plt.figure(figsize=(10, 7))
+        rows = 1
+        columns = 2
+        fig.add_subplot(rows, columns, 1)
+
+        plt.imshow(image,cmap='gray')
+        plt.axis("off")
+
+        fig.add_subplot(rows, columns, 2)
+        plt.imshow(mask,cmap='gray')
+        plt.axis("off")
+        plt.show()
+
+
 
