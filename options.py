@@ -13,7 +13,9 @@ class Options:
         self.parser.add_argument("--augmentation", type=str, default="False", help="Do you want to augment training dataset? True/False")
         self.parser.add_argument("--augmentation_iterations", type=int, default=5, help="Number of augmentations iterations per image")
         self.parser.add_argument("--batch_size", type=int, default=32)
-
+        self.parser.add_argument("--patches",  type=str, default="False", help="Do you want to exctract patches from images  True/False")
+        self.parser.add_argument("--patch_size", type=int, default=32, help="Patch_size, the image will be square, height equal to width")
+   
     def parse(self):
         self.opt = self.parser.parse_args()
         return self.opt
@@ -44,6 +46,14 @@ class Options:
             print(f"Augmentation iterations had to be bigger than 1")
             return False
 
+        if opt.patches not in ["True", "False"]:
+            print("Patches has to be True or False")
+            return False
+
+        if opt.patches == "True" and opt.patch_size < 8:
+            print("Patches size has to be >= 8")
+            return False
+
         if(opt.image_size < 64):
             print("Image size has to be >= 64")
             return False
@@ -51,5 +61,5 @@ class Options:
         if(opt.batch_size < 1):
             print("Batch size has to be >= 1")
             return False
-       
+
         return valid
