@@ -1,6 +1,6 @@
 import glob
 import tensorflow as tf
-from utils import load_image, pre_process, augment_using_ops, split_data, get_threshold
+from utils import load_image, pre_process, augment_using_ops, split_data, get_threshold, extract_patches
 from networks import autoencoder
 from options import Options
 
@@ -17,7 +17,7 @@ image_shape = (cfg.image_size, cfg.image_size, 3)
 # read all image file paths
 image_paths = []
 
-[image_paths.extend(glob.glob("C:/Users/jpmrs/OneDrive/Desktop/Dissertação/code/Data/mvtec/leather/train" + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
+[image_paths.extend(glob.glob(cfg.train_data_dir + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
 # create tf.Data with image paths and shuffle them
 ds = tf.data.Dataset.from_tensor_slices(image_paths).shuffle(1024)
 
@@ -42,6 +42,26 @@ ds = ds.map(
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
+model_input_shape = image_shape
+#patch_shape = (cfg.patch_size, cfg.patch_size, 3)
+#model_input_shape = patch_shape 
+
+# extract patches from images
+# ds = ds.map(
+#     lambda image: (
+#         tf.py_function(func=extract_patches, inp=[
+#             image, patch_shape], Tout=tf.float32)
+#     ),
+#     num_parallel_calls=tf.data.AUTOTUNE,
+# )
+
+# get number of patches obtained in one image
+#elem = next(iter(ds))
+#n_patches_per_image = len(elem)
+
+# remove batch -> ([245,64,32,32,3]) to [15680,32,32,3], images are saved in a list for the augment step
+# ds = ds.unbatch().apply(tf.data.experimental.assert_cardinality(n_patches_per_image * n_images))
+  
 if(cfg.augmentation == "True"):
     # image augmentation
     ds = ds.map(
@@ -68,12 +88,12 @@ train_dataset, val_dataset, threshold_dataset = split_data(ds,cfg.batch_size)
 
 # construct our convolutional autoencoder
 print("[INFO] building autoencoder...")
-autoencoder = autoencoder(image_shape, 100)
+autoencoder = autoencoder( model_input_shape, 100)
 
 # train the convolutional autoencoder
 autoencoder.fit(train_dataset,validation_data=val_dataset,epochs=20,batch_size=cfg.batch_size)
 autoencoder.save("model2")
 
-ssim_threshold=get_threshold(threshold_dataset,autoencoder,cfg)
+ssim_threshold, l1_threshold =get_threshold(threshold_dataset,autoencoder)
 
-print(ssim_threshold)
+print(ssim_threshold,l1_threshold) 
