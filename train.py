@@ -43,24 +43,6 @@ ds = ds.map(
 )
 
 model_input_shape = image_shape
-#patch_shape = (cfg.patch_size, cfg.patch_size, 3)
-#model_input_shape = patch_shape 
-
-# extract patches from images
-# ds = ds.map(
-#     lambda image: (
-#         tf.py_function(func=extract_patches, inp=[
-#             image, patch_shape], Tout=tf.float32)
-#     ),
-#     num_parallel_calls=tf.data.AUTOTUNE,
-# )
-
-# get number of patches obtained in one image
-#elem = next(iter(ds))
-#n_patches_per_image = len(elem)
-
-# remove batch -> ([245,64,32,32,3]) to [15680,32,32,3], images are saved in a list for the augment step
-# ds = ds.unbatch().apply(tf.data.experimental.assert_cardinality(n_patches_per_image * n_images))
   
 if(cfg.augmentation == "True"):
     # image augmentation
