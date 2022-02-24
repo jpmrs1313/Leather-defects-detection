@@ -1,98 +1,128 @@
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import glob
-from utils import load_image, pre_process, extract_patches, recon_im,get_residual_map
-from networks import ssim_loss
-from options import Options
-from tensorflow.keras import optimizers
 import numpy as np
-
+from utils import *
+from networks import *
+from sklearn.metrics import roc_auc_score
+import segmentation_models as sm
+from options import Options
 
 # parse argument variables
 cfg = Options().parse()
 
-if(cfg.grey_scale == "True"):
-    image_shape = (cfg.image_size, cfg.image_size,1)
-    patch_shape = (cfg.patch_size, cfg.patch_size,1)
-else:
-    image_shape = (cfg.image_size, cfg.image_size, 3)
-    patch_shape = (cfg.patch_size, cfg.patch_size, 3)
+image_shape = (cfg.image_size, cfg.image_size, 1)
+patch_shape = (cfg.patch_size,cfg.patch_size,1)
 
 # read all image file paths
 image_paths = []
 [image_paths.extend(glob.glob(cfg.test_data_dir + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
 
-ds = tf.data.Dataset.from_tensor_slices(image_paths).shuffle(1024)
+ground_truth_paths  = []
+[ground_truth_paths.extend(glob.glob(cfg.ground_truth_data_dir + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
+
+ds = tf.data.Dataset.from_tensor_slices((image_paths,ground_truth_paths)).shuffle(1024)
 
 n_images = len(ds)
 
 # load images from paths
 ds = ds.map(
-    lambda image: (
+    lambda path1, path2: (
         tf.py_function(
             func=load_image,
-            inp=[image, image_shape],
+            inp=[path1,image_shape],
+            Tout=tf.float32,
+        ),
+         tf.py_function(
+            func=load_mask,
+            inp=[path2,image_shape],
             Tout=tf.float32,
         )
     ),
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
-# pre-process images
+#pre-process
 ds = ds.map(
-    lambda image: (tf.numpy_function(
-        func=pre_process, inp=[image,cfg.grey_scale], Tout=tf.float32)),
+    lambda image,ground_truth: (
+        tf.numpy_function(func=pre_process, inp=[image], Tout=tf.float32),
+        ground_truth
+        ),
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
-autoencoder = tf.keras.models.load_model("model2", compile=False)
-optimizer = optimizers.Adam(learning_rate=2e-4, decay=1e-5)
-autoencoder.compile(optimizer=optimizer, loss=ssim_loss, metrics=["mae"])
+IOU=sm.metrics.IOUScore()
+FScore=sm.metrics.FScore()
+
+y_true=[]
+y_pred=[]
+i=0
 
 if(cfg.patches=="True"):
-    for image in ds:
-        patches =  extract_patches(image, patch_shape)
-        predictions = autoencoder.predict(patches)
-        result = recon_im(predictions, image_shape)
+    #extract patches from images
+    ds = ds.map(
+        lambda image, ground_truth: (
+            tf.py_function(func=extract_patches, inp=[
+                image, patch_shape], Tout=tf.float32),
+            ground_truth
+        ),
+        num_parallel_calls=tf.data.AUTOTUNE,
+    )
 
-        fig = plt.figure(figsize=(10, 7))
-        rows = 1
-        columns = 2
-        fig.add_subplot(rows, columns, 1)
+    autoencoder = autoencoder(patch_shape, 100)
+    autoencoder.load_weights("checkpoints/model1_patches/")
+    optimizer = tf.keras.optimizers.Adam(learning_rate=2e-4, decay=1e-5)
+    autoencoder.compile(optimizer=optimizer, loss=ssim_loss, metrics=["mae"])
 
-        plt.imshow(image,cmap='gray')
-        plt.axis("off")
+    for patches,ground_truth in ds:
+        ground_truth = ground_truth.numpy()
+        if(not np.any(ground_truth)): continue
+        
+        patches_pred=[]
+        
+        for patch in patches:
+            ssim_residual_map, l1_residual_map = get_residual_map(patch,autoencoder)
+            image_pred = np.zeros((cfg.patch_size,cfg.patch_size), np.uint8)
+            
+            #model1 0.49108871459960923     #model2 0.13881855189800252
+            image_pred[ssim_residual_map >0.49108871459960923] = 1
+            patches_pred.append(image_pred)
 
-        fig.add_subplot(rows, columns, 2)
-        plt.imshow(result,cmap='gray')
-        plt.axis("off")
-        plt.show()
-else:
-    results = autoencoder.predict(ds)
-    for result, image in zip(results,ds):
-        ssim_residual_map = get_residual_map(image,autoencoder, cfg)
+        patches_pred=np.array(patches_pred)
+        image_pred=recon_im(patches_pred, image_shape)
 
-        depr_mask = np.ones((256,256)) * 0.2
-        depr_mask[5:256-5, 5:256-5] = 1
+        #plot_two_images(image_pred,ground_truth)
 
-        ssim_residual_map *= depr_mask
+        y_pred.append(image_pred)
+        y_true.append(ground_truth)
+else:   
+    autoencoder = autoencoder(image_shape, 100)
+    autoencoder.load_weights("checkpoints/model2/")
+    optimizer = tf.keras.optimizers.Adam(learning_rate=2e-4, decay=1e-5)
+    autoencoder.compile(optimizer=optimizer, loss=ssim_loss, metrics=["mae"])
+    
+    for image,ground_truth in ds:
+        ground_truth = ground_truth.numpy()
+        if(not np.any(ground_truth)): continue
 
-        mask = np.zeros((256,256))
-        mask[ssim_residual_map > 0.2488967776298523] = 1
-        mask[ssim_residual_map <= 0.2488967776298523] = 0
-     
-        fig = plt.figure(figsize=(10, 7))
-        rows = 1
-        columns = 2
-        fig.add_subplot(rows, columns, 1)
+        ssim_residual_map, _ = get_residual_map(image,autoencoder)
+        image_pred = np.zeros((cfg.image_size,cfg.image_size), np.float32)
+            
+        #model1 0.5898075258731843    #model2 0.25707741141319285
+        image_pred[ssim_residual_map > 0.25707741141319285] = 1 
 
-        plt.imshow(image,cmap='gray')
-        plt.axis("off")
+        #plot_two_images(image_pred,ground_truth)
 
-        fig.add_subplot(rows, columns, 2)
-        plt.imshow(mask,cmap='gray')
-        plt.axis("off")
-        plt.show()
+        y_pred.append(image_pred)
+        y_true.append(ground_truth)
 
+y_true=np.array(y_true)
+y_pred=np.array(y_pred)
 
+print("IOU "+ str(IOU(y_pred,y_true)))
+print("FScore " + str(FScore(y_pred,y_true)))
 
+y_pred = y_pred.flatten()
+y_true = y_true.flatten()
+
+print("AUC " + str(roc_auc_score(y_pred,y_true)))
