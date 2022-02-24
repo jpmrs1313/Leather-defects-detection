@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 from skimage.metrics import structural_similarity as ssim
+from skimage.segmentation import join_segmentations
 
 def load_image(file_path: str, shape: tf.Tensor) -> tf.Tensor:
     """Load image 
@@ -241,19 +242,30 @@ def get_residual_map(image, autoencoder):
 
     return ssim_residual_map, l1_residual_map
 
-def plot_two_images(image1,image2):
+def plot_images(image1,image2):
+
+    image1=np.array(image1,dtype=np.int32)
+    image2=np.array(image2,dtype=np.int32)
+    segj = join_segmentations(image1, image2)
+    
     fig = plt.figure(figsize=(10, 7))
 
     rows = 1
-    columns = 2
+    columns = 3
     fig.add_subplot(rows, columns, 1)
 
-    plt.imshow(image1,cmap='gray')
+    plt.imshow(image1)
     plt.title("prediction")
     plt.axis("off")
 
     fig.add_subplot(rows, columns, 2)
-    plt.imshow(image2,cmap='gray')
+    plt.imshow(image2)
     plt.title("ground_truth")
     plt.axis("off")
+
+    fig.add_subplot(rows, columns, 3)
+    plt.imshow(segj)
+    plt.title("join")
+    plt.axis("off")
+
     plt.show()
