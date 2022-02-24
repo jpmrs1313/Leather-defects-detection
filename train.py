@@ -1,8 +1,9 @@
 import glob
 import tensorflow as tf
-from utils import load_image, pre_process, augment_using_ops, extract_patches, split_data, get_threshold
+from utils import *
 from networks import autoencoder
 from options import Options
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 
 tf.random.set_seed(5)
 
@@ -12,21 +13,15 @@ if not Options().train_validate():
 # parse argument variables
 cfg = Options().parse()
 
-if(cfg.grey_scale == "True"):
-    image_shape = (cfg.image_size, cfg.image_size,1)
-    patch_shape = (cfg.patch_size, cfg.patch_size,1)
-else:
-    image_shape = (cfg.image_size, cfg.image_size, 3)
-    patch_shape = (cfg.patch_size, cfg.patch_size, 3)
+image_shape = (cfg.image_size, cfg.image_size, 1)
+patch_shape = (cfg.patch_size,cfg.patch_size,1)
 
 # read all image file paths
 image_paths = []
-# [image_paths.extend(glob.glob(cfg.train_data_dir + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
-[image_paths.extend(glob.glob("C:/Users/jpmrs/OneDrive/Desktop/Dissertação/code/Data/mvtec/leather/train" + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
+
+[image_paths.extend(glob.glob(cfg.train_data_dir + '/**/' + '*.' + e)) for e in ['png', 'jpg']]
 # create tf.Data with image paths and shuffle them
 ds = tf.data.Dataset.from_tensor_slices(image_paths).shuffle(1024)
-
-n_images = len(ds)
 
 # load images from paths
 ds = ds.map(
@@ -40,18 +35,19 @@ ds = ds.map(
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
-# pre-process images
+#pre-process
 ds = ds.map(
     lambda image: (tf.numpy_function(
-        func=pre_process, inp=[image, cfg.grey_scale], Tout=tf.float32)),
+        func=pre_process, inp=[image], Tout=tf.float32)),
     num_parallel_calls=tf.data.AUTOTUNE,
 )
 
-if(cfg.patches == "True"):
-    
+n_images=len(ds)
+
+if(cfg.patches=="True"):
     model_input_shape = patch_shape 
 
-    # extract patches from images
+    #extract patches from images
     ds = ds.map(
         lambda image: (
             tf.py_function(func=extract_patches, inp=[
@@ -60,15 +56,14 @@ if(cfg.patches == "True"):
         num_parallel_calls=tf.data.AUTOTUNE,
     )
 
-    # get number of patches obtained in one image
+    #get number of patches obtained in one image
     elem = next(iter(ds))
     n_patches_per_image = len(elem)
 
-    # remove batch -> ([245,64,32,32,3]) to [15680,32,32,3], images are saved in a list for the augment step
+    #remove batch -> ([245,64,32,32,3]) to [15680,32,32,3], images are saved in a list for the augment step
     ds = ds.unbatch().apply(tf.data.experimental.assert_cardinality(n_patches_per_image * n_images))
 else:
-    model_input_shape = image_shape   
-
+      model_input_shape = image_shape 
 
 if(cfg.augmentation == "True"):
     # image augmentation
@@ -83,8 +78,6 @@ if(cfg.augmentation == "True"):
         num_parallel_calls=tf.data.AUTOTUNE,
     ).repeat(cfg.augmentation_iterations)  # number of augmentation iterations
 
-
-# from image, create (image,image)->(element and label)
 ds = ds.map(
     lambda image: (
         image, image
@@ -93,17 +86,17 @@ ds = ds.map(
 )
 
 # split data in train, validate and test
-train_dataset, val_dataset, test_dataset = split_data(ds,cfg.batch_size)
+train_dataset, val_dataset, threshold_dataset = split_data(ds,cfg.batch_size)
 
 # construct our convolutional autoencoder
-print("[INFO] building autoencoder...")
 autoencoder = autoencoder(model_input_shape, 100)
+earlystopping = EarlyStopping(patience=20)
+
+checkpoint_filepath = "checkpoints/model1/"
+checkpoint = ModelCheckpoint( filepath=checkpoint_filepath, save_best_only=True,period=1, mode='auto', verbose=1, save_weights_only=True)
 
 # train the convolutional autoencoder
-autoencoder.fit(train_dataset,validation_data=val_dataset,epochs=20,batch_size=cfg.batch_size)
+autoencoder.fit(train_dataset,validation_data=val_dataset,epochs=20,batch_size=cfg.batch_size, callbacks=[checkpoint, earlystopping])
 
-autoencoder.save("model2")
-
-ssim_threshold, l1_threshold=get_threshold(test_dataset,autoencoder,cfg)
-
-print(ssim_threshold,l1_threshold)
+ssim_threshold, l1_threshold = get_threshold(threshold_dataset,autoencoder)
+print(ssim_threshold,l1_threshold) 

@@ -1,11 +1,10 @@
-import string
 import tensorflow as tf
 import numpy as np
 import cv2
+import matplotlib.pyplot as plt
 from skimage.metrics import structural_similarity as ssim
 
-
-def load_image(file_path: string, shape: tf.Tensor) -> tf.Tensor:
+def load_image(file_path: str, shape: tf.Tensor) -> tf.Tensor:
     """Load image 
 
     Parameters
@@ -23,38 +22,56 @@ def load_image(file_path: string, shape: tf.Tensor) -> tf.Tensor:
     image = tf.io.read_file(file_path)
     # Load image
     image = tf.io.decode_image(image, dtype=tf.uint8)
+    image=tf.image.rgb_to_grayscale(image)
     image = tf.image.resize(image, (height, width))
     image = tf.cast(image, tf.float32) / 255.0
 
     return image
 
-def pre_process(image: np.ndarray, greyscale) -> np.ndarray:
+def load_mask(file_path: str, shape: tf.Tensor) -> tf.Tensor:
+    """Load image 
+
+    Parameters
+    -----------
+    file_path: image directory string
+    shape: image shape tf.Tensor (height, width, depth)
+
+    Returns
+    -----------
+    image: image tf.Tensor ([height, width, channels])
+    """
+    #height, width, depth = shape
+    height, width, depth = shape
+    # Read image bytes
+    image = tf.io.read_file(file_path)
+    # Load image
+    image = tf.io.decode_image(image, dtype=tf.uint8)
+    image = tf.image.resize(image, (height, width),method='nearest')
+    image = tf.cast(image, tf.float32) / 255.0
+    image = tf.squeeze(image)
+
+    return image
+
+def pre_process(image: np.ndarray) -> np.ndarray:
     """Image preprocessing function, at this moment just apply gaussian blur. However others techniques can be added to the pipeline
 
     Parameters
     -----------
     image: numpy array
-    greyscale: str "True" or "False"
+
 
     Returns
     -----------
     image: numpy array
     """
-    greyscale = greyscale.decode("utf-8") 
-
-    if(greyscale == "True"): 
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
     image = cv2.GaussianBlur(image, (5, 5), 0)
-    
-    if(greyscale == "True"): 
-        image = image[:, :, np.newaxis]
+    image = image[..., np.newaxis]
 
     return image
 
 def extract_patches(image: tf.Tensor, patch_shape: tf.Tensor) -> tf.Tensor:
     """Split an image in patches with specific shape
-
     Parameters
     -----------
     image: image tf.Tensor ([height, width, channels])
@@ -109,8 +126,8 @@ def recon_im(patches: np.ndarray, image_shape):
         patch_size + patch_size
     cols = ((image_width - patch_size) // patch_size) * patch_size + patch_size
 
-    reconim = np.zeros((rows, cols, image_depth))
-    divim = np.zeros((rows, cols, image_depth))
+    reconim = np.zeros((rows, cols))
+    divim = np.zeros((rows, cols))
 
     p_c = (
         cols - patch_size + patch_size
@@ -150,6 +167,7 @@ def recon_im(patches: np.ndarray, image_shape):
         patch_num += 1
     # Average out pixel values
     reconstructedim = reconim / divim
+    reconstructedim = reconstructedim.astype('float32')
 
     return reconstructedim
 
@@ -196,50 +214,46 @@ def split_data(dataset: tf.Tensor,batch_size: int)-> tf.Tensor:
 
     return train_dataset, val_dataset, test_dataset
 
-def get_threshold(dataset,autoencoder,cfg):
-    total_rec_ssim = []
-    #total_rec_l1 = []
+def get_threshold(dataset,autoencoder):
+    total_rec_ssim, total_rec_l1 = [], []
     for batch, __ in dataset:
         for image in batch:
-            ssim_residual_map, l1_residual_map = get_residual_map(image,autoencoder,cfg)
+            ssim_residual_map, l1_residual_map = get_residual_map(image,autoencoder)
             total_rec_ssim.append(ssim_residual_map)
-            #total_rec_l1.append(l1_residual_map)
+            total_rec_l1.append(l1_residual_map)
     total_rec_ssim = np.array(total_rec_ssim)
     total_rec_l1 = np.array(total_rec_l1)
-    ssim_threshold = float(np.percentile(total_rec_ssim, [98]))
-    #l1_threshold = float(np.percentile(total_rec_l1, [98]))
-    
-    return ssim_threshold #l1_threshold
+    ssim_threshold = float(np.percentile(total_rec_ssim, [99]))
+    l1_threshold = float(np.percentile(total_rec_l1, [99]))
 
-def get_residual_map(image, autoencoder,cfg):
+    return ssim_threshold,l1_threshold
 
-    if(cfg.patches=="True"):
-
-        if(cfg.grey_scale == "True"):
-            image_shape = (cfg.image_size, cfg.image_size,1)
-            patch_shape = (cfg.patch_size, cfg.patch_size,1)
-        else:
-            image_shape = (cfg.image_size, cfg.image_size, 3)
-            patch_shape = (cfg.patch_size, cfg.patch_size, 3)
-
-        patches =  extract_patches(image, patch_shape)
-        predictions = autoencoder.predict(patches)
-        result = recon_im(predictions, image_shape)
-            
-    else:
-        image = tf.expand_dims(image, 0)
-        result = autoencoder.predict(image)
+def get_residual_map(image, autoencoder):
+    image = tf.expand_dims(image, 0)
+    result = autoencoder.predict(image)
 
     image=image.numpy()
     image = np.squeeze(image)
     result = np.squeeze(result)
 
-    if(cfg.patches=="True"):
-        ssim_residual_map = 1 - ssim(image, result, win_size=11, full=True)[1]
-        #l1_residual_map = np.abs(image / 255. - result / 255.)
-    else:
-        ssim_residual_map = ssim(image, result, win_size=11, full=True, multichannel=True)[1]
-        ssim_residual_map = 1 - np.mean(ssim_residual_map, axis=2)
-        #l1_residual_map = np.mean(np.abs(image / 255. - result / 255.), axis=2)
+    ssim_residual_map = 1 - ssim(image,result, win_size=11, full=True)[1]
+    l1_residual_map = np.abs(image / 255. - result / 255.)
 
-    return ssim_residual_map #l1_residual_map
+    return ssim_residual_map, l1_residual_map
+
+def plot_two_images(image1,image2):
+    fig = plt.figure(figsize=(10, 7))
+
+    rows = 1
+    columns = 2
+    fig.add_subplot(rows, columns, 1)
+
+    plt.imshow(image1,cmap='gray')
+    plt.title("prediction")
+    plt.axis("off")
+
+    fig.add_subplot(rows, columns, 2)
+    plt.imshow(image2,cmap='gray')
+    plt.title("ground_truth")
+    plt.axis("off")
+    plt.show()
