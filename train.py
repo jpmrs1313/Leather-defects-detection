@@ -4,11 +4,9 @@ from utils import *
 from networks import autoencoder
 from options import Options
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
-
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 tf.random.set_seed(5)
-
-if not Options().train_validate():
-    exit()
 
 # parse argument variables
 cfg = Options().parse()
@@ -89,14 +87,14 @@ ds = ds.map(
 train_dataset, val_dataset, threshold_dataset = split_data(ds,cfg.batch_size)
 
 # construct our convolutional autoencoder
-autoencoder = autoencoder(model_input_shape, 100)
+autoencoder = autoencoder(model_input_shape,cfg.loss, 100)
 earlystopping = EarlyStopping(patience=20)
 
-checkpoint_filepath = "checkpoints/model2_patches/"
+checkpoint_filepath = "checkpoints/model5/"
 checkpoint = ModelCheckpoint( filepath=checkpoint_filepath, save_best_only=True,period=1, mode='auto', verbose=1, save_weights_only=True)
 
 # train the convolutional autoencoder
 autoencoder.fit(train_dataset,validation_data=val_dataset,epochs=20,batch_size=cfg.batch_size, callbacks=[checkpoint, earlystopping])
 
-ssim_threshold, l1_threshold = get_threshold(threshold_dataset,autoencoder)
-print(ssim_threshold,l1_threshold) 
+threshold = get_threshold(threshold_dataset,autoencoder,cfg.loss)
+print(threshold) 

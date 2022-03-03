@@ -215,21 +215,18 @@ def split_data(dataset: tf.Tensor,batch_size: int)-> tf.Tensor:
 
     return train_dataset, val_dataset, test_dataset
 
-def get_threshold(dataset,autoencoder):
-    total_rec_ssim, total_rec_l1 = [], []
+def get_threshold(dataset,autoencoder,loss):
+    total_rec= []
     for batch, __ in dataset:
         for image in batch:
-            ssim_residual_map, l1_residual_map = get_residual_map(image,autoencoder)
-            total_rec_ssim.append(ssim_residual_map)
-            total_rec_l1.append(l1_residual_map)
-    total_rec_ssim = np.array(total_rec_ssim)
-    total_rec_l1 = np.array(total_rec_l1)
-    ssim_threshold = float(np.percentile(total_rec_ssim, [99]))
-    l1_threshold = float(np.percentile(total_rec_l1, [99]))
+            residual_map = get_residual_map(image,autoencoder,loss)
+            total_rec.append(residual_map)
+      
+    total_rec = np.array(total_rec)
 
-    return ssim_threshold,l1_threshold
+    return float(np.percentile(total_rec, [99]))
 
-def get_residual_map(image, autoencoder):
+def get_residual_map(image, autoencoder,loss):
     image = tf.expand_dims(image, 0)
     result = autoencoder.predict(image)
 
@@ -237,10 +234,10 @@ def get_residual_map(image, autoencoder):
     image = np.squeeze(image)
     result = np.squeeze(result)
 
-    ssim_residual_map = 1 - ssim(image,result, win_size=11, full=True)[1]
-    l1_residual_map = np.abs(image / 255. - result / 255.)
+    if(loss=="ssim"):residual_map = 1 - ssim(image,result, win_size=11, full=True)[1]
+    else: residual_map = np.abs(image  - result) ** 2
 
-    return ssim_residual_map, l1_residual_map
+    return residual_map
 
 def plot_images(image1,image2):
 
